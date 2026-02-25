@@ -1,0 +1,10 @@
+services:
+  backend:
+    build: ./backend
+    container_name: 3dgs-backend
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data
+      - ./backend/uploads:/app/backend/uploads
+    restart: always
