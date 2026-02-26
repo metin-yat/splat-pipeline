@@ -95,7 +95,7 @@ async def start_colmap_pipeline(video_name: str, background_tasks: BackgroundTas
     
     video_id = Path(video_name).stem.replace(" ", "_").lower()
     
-    # 1. Lock Check: Sistem meşgul mü?
+    # Lock Check
     if is_system_busy:
         raise HTTPException(status_code=409, detail="System is busy with another task.")
 
@@ -103,10 +103,9 @@ async def start_colmap_pipeline(video_name: str, background_tasks: BackgroundTas
     if not video_path.exists():
         raise HTTPException(status_code=404, detail="Video not found. Please upload first.")
 
-    # 2. Set Lock: İşlemi başlatıyoruz
+    # Set Lock
     is_system_busy = True
     
-    # 3. Background Task: COLMAP Pipeline'ı tetikle
     background_tasks.add_task(
         colmap_pipeline_task,
         video_id,

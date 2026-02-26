@@ -50,7 +50,7 @@ def extract_frames_task(
         TaskProgressColumn(),
         TimeRemainingColumn(),
         console=console,
-        transient=True # Bar disappears from terminal once finished
+        transient=True
     ) as progress_bar:
         
         task = progress_bar.add_task(f"[magenta]Processing {video_id}...", total=total_frames)
@@ -88,7 +88,7 @@ def extract_frames_task(
 
 
 def colmap_pipeline_task(video_id: str, data_dir: Path, tasks_progress: dict, logger):
-    global is_system_busy # main.py'daki bayrağa erişim
+    global is_system_busy
     
     project_path = data_dir / video_id
     image_path = project_path / "images"
@@ -96,12 +96,11 @@ def colmap_pipeline_task(video_id: str, data_dir: Path, tasks_progress: dict, lo
     sparse_path = project_path / "sparse"
     ply_path = project_path / "pcd.ply"
 
-    # Ortam değişkeni: Qt ekran hatasını önlemek için
     env = os.environ.copy()
     env["QT_QPA_PLATFORM"] = "offscreen"
 
     try:
-        # A. Clean Slate: Mevcut klasörü sil ve temiz başla
+        # Clean Slate
         if sparse_path.exists():
             shutil.rmtree(sparse_path)
         if db_path.exists():
@@ -160,7 +159,6 @@ def colmap_pipeline_task(video_id: str, data_dir: Path, tasks_progress: dict, lo
         logger.error(f"ERROR: Unexpected error in pipeline: {e}")
         tasks_progress[video_id] = {"status": "failed", "error": "Internal error"}
     finally:
-        # 5. Unlock: İşlem bittiğinde kilidi mutlaka açıyoruz
         import main
         main.is_system_busy = False
 
