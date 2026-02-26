@@ -7,4 +7,15 @@ services:
     volumes:
       - ./data:/app/data
       - ./backend/uploads:/app/backend/uploads
+    environment:
+      - NVIDIA_DRIVER_CAPABILITIES=all
+      - QT_QPA_PLATFORM=offscreen
+      - PYOPENGL_PLATFORM=egl
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu, graphics, utility, compute]  # graphics ekle!
     restart: always

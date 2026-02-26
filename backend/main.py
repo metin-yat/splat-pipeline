@@ -6,7 +6,7 @@ from fastapi import FastAPI, UploadFile, File, HTTPException, BackgroundTasks
 from rich.logging import RichHandler
 from rich.console import Console
 
-from utils import extract_frames_task
+from utils import extract_frames_task, colmap_pipeline_task
 
 app = FastAPI()
 console = Console()
@@ -42,10 +42,11 @@ logger.addHandler(file_handler)
 logger.addHandler(rich_handler)
 
 tasks_progress = {} # Global Task State 
+is_system_busy = False
 
 @app.get("/")
 async def health_check():
-    return {"status": "healthy", "service": "3dgs-backend"}
+    return {"status": "healthy", "service": "3dgs-backend", "busy": is_system_busy}
 
 @app.post("/upload-video")
 async def upload_video(video: UploadFile = File(...)):
@@ -87,6 +88,38 @@ async def start_extraction(video_name: str, background_tasks: BackgroundTasks):
         "task_id": video_id,
         "message": "Extraction started. Monitor terminal or use /task-status endpoint."
     }
+
+@app.post("/run-colmap/{video_name}")
+async def start_colmap_pipeline(video_name: str, background_tasks: BackgroundTasks):
+    global is_system_busy
+    
+    video_id = Path(video_name).stem.replace(" ", "_").lower()
+    
+    # 1. Lock Check: Sistem meşgul mü?
+    if is_system_busy:
+        raise HTTPException(status_code=409, detail="System is busy with another task.")
+
+    video_path = UPLOAD_DIR / video_name
+    if not video_path.exists():
+        raise HTTPException(status_code=404, detail="Video not found. Please upload first.")
+
+    # 2. Set Lock: İşlemi başlatıyoruz
+    is_system_busy = True
+    
+    # 3. Background Task: COLMAP Pipeline'ı tetikle
+    background_tasks.add_task(
+        colmap_pipeline_task,
+        video_id,
+        DATA_DIR,
+        tasks_progress,
+        logger
+    )
+
+    return {
+        "task_id": video_id,
+        "message": "COLMAP Pipeline started. System is now locked until completion."
+    }
+
 
 @app.get("/task-status/{video_id}")
 async def get_task_status(video_id: str):

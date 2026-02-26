@@ -4,6 +4,10 @@ from pathlib import Path
 from rich.progress import (Progress, TextColumn, BarColumn,
             TaskProgressColumn, TimeRemainingColumn)
 
+import subprocess
+import os
+import shutil
+
 def extract_frames_task(
     video_name: str, 
     upload_dir: Path, 
@@ -80,3 +84,85 @@ def extract_frames_task(
     cap.release()
     tasks_progress[video_id].update({"status": "completed", "progress": 100, "saved_frames": saved_count})
     logger.info(f"[bold green]Finished:[/bold green] {video_id} ({saved_count} frames saved to {output_dir})")
+
+
+
+def colmap_pipeline_task(video_id: str, data_dir: Path, tasks_progress: dict, logger):
+    global is_system_busy # main.py'daki bayrağa erişim
+    
+    project_path = data_dir / video_id
+    image_path = project_path / "images"
+    db_path = project_path / "database.db"
+    sparse_path = project_path / "sparse"
+    ply_path = project_path / "pcd.ply"
+
+    # Ortam değişkeni: Qt ekran hatasını önlemek için
+    env = os.environ.copy()
+    env["QT_QPA_PLATFORM"] = "offscreen"
+
+    try:
+        # A. Clean Slate: Mevcut klasörü sil ve temiz başla
+        if sparse_path.exists():
+            shutil.rmtree(sparse_path)
+        if db_path.exists():
+            os.remove(db_path)
+        
+        sparse_path.mkdir(parents=True, exist_ok=True)
+        tasks_progress[video_id] = {"status": "processing", "step": "starting"}
+
+        # 1. Feature Extraction
+        logger.info(f" Starting Feature Extraction for {video_id}")
+        tasks_progress[video_id]["step"] = "feature_extraction"
+        subprocess.run([
+            "colmap", "feature_extractor",
+            "--database_path", str(db_path),
+            "--image_path", str(image_path),
+            "--FeatureExtraction.use_gpu", "1"
+        ], env=env, check=True)
+
+        # 2. Sequential Matching
+        logger.info(f" Starting Sequential Matching for {video_id}")
+        tasks_progress[video_id]["step"] = "matching"
+        subprocess.run([
+            "colmap", "sequential_matcher",
+            "--database_path", str(db_path)
+        ], env=env, check=True)
+
+        # 3. Sparse Mapping
+        logger.info(f" Starting Sparse Mapping for {video_id}")
+        tasks_progress[video_id]["step"] = "mapping"
+        subprocess.run([
+            "colmap", "mapper",
+            "--database_path", str(db_path),
+            "--image_path", str(image_path),
+            "--output_path", str(sparse_path),
+            "--Mapper.multiple_models", "0", 
+            "--Mapper.min_num_matches", "10"  
+        ], env=env, check=True)
+
+        # 4. Model Conversion (.bin -> .ply)
+        logger.info(f" Converting to PLY for {video_id}")
+        tasks_progress[video_id]["step"] = "converting"
+        subprocess.run([
+            "colmap", "model_converter",
+            "--input_path", str(sparse_path / "0"),
+            "--output_path", str(ply_path),
+            "--output_type", "PLY"
+        ], env=env, check=True)
+
+        logger.info(f"INFO: Pipeline completed successfully for {video_id}")
+        tasks_progress[video_id] = {"status": "completed", "step": "done", "ply_path": str(ply_path)}
+
+    except subprocess.CalledProcessError as e:
+        logger.error(f"ERROR: COLMAP step failed: {e}")
+        tasks_progress[video_id] = {"status": "failed", "error": str(e)}
+    except Exception as e:
+        logger.error(f"ERROR: Unexpected error in pipeline: {e}")
+        tasks_progress[video_id] = {"status": "failed", "error": "Internal error"}
+    finally:
+        # 5. Unlock: İşlem bittiğinde kilidi mutlaka açıyoruz
+        import main
+        main.is_system_busy = False
+
+
+
