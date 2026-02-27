@@ -5,11 +5,14 @@ from logging.handlers import RotatingFileHandler
 from fastapi import FastAPI, UploadFile, File, HTTPException, BackgroundTasks
 from rich.logging import RichHandler
 from rich.console import Console
+import httpx
 
 from utils import extract_frames_task, colmap_pipeline_task
 
 app = FastAPI()
 console = Console()
+
+SPLAT_URL = "http://splat:8000"
 
 # Path Configurations ---
 UPLOAD_DIR = Path("uploads")
@@ -44,9 +47,33 @@ logger.addHandler(rich_handler)
 tasks_progress = {} # Global Task State 
 is_system_busy = False
 
+## Health check of backend and its connection with splatting service
 @app.get("/")
 async def health_check():
     return {"status": "healthy", "service": "3dgs-backend", "busy": is_system_busy}
+
+@app.get("/test-splatting-service")
+async def check_connection_between_services():
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            response = await client.get(f"{SPLAT_URL}/")
+            
+        if response.status_code == 200:
+            return {
+                "status": "success",
+                "message": "Splatting works fine!",
+                "worker_response": response.json()
+            }
+        else:
+            return {
+                "status": "error",
+                "message": f"Splatting returned an error: {response.status_code}"
+            }
+    except Exception as e:
+        raise HTTPException(
+            status_code=503, 
+            detail=f"COULDN2T CONNECT TO SPLATTIN SERVICE. Error: {str(e)}"
+        )
 
 @app.post("/upload-video")
 async def upload_video(video: UploadFile = File(...)):
@@ -118,7 +145,6 @@ async def start_colmap_pipeline(video_name: str, background_tasks: BackgroundTas
         "task_id": video_id,
         "message": "COLMAP Pipeline started. System is now locked until completion."
     }
-
 
 @app.get("/task-status/{video_id}")
 async def get_task_status(video_id: str):

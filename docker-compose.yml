@@ -17,5 +17,37 @@ services:
           devices:
             - driver: nvidia
               count: all
-              capabilities: [gpu, graphics, utility, compute]  # graphics ekle!
+              capabilities: [gpu, graphics, utility, compute]
+    networks:
+      - 3dgs-network
     restart: always
+
+  splat:
+    build: ./splat
+    container_name: 3dgs-splatting
+    ports:
+      - "8001:8000"
+      - "7007:7007"
+    volumes:
+      - ./data:/workspace/data
+      - ./.cache:/home/user/.cache
+    shm_size: '12gb'
+    environment:
+      - NVIDIA_DRIVER_CAPABILITIES=all
+      - TORCH_HOME=/home/user/.cache/torch
+      - HF_HOME=/home/user/.cache/huggingface
+      - TORCHINDUCTOR_CACHE_DIR=/home/user/.cache/torchinductor
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [compute, utility]
+    networks:
+      - 3dgs-network
+    restart: always
+
+networks:
+  3dgs-network:
+    driver: bridge

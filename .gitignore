@@ -1,2 +1,4 @@
 data
 backend/uploads
+.env
+.cache
