@@ -152,3 +152,53 @@ async def get_task_status(video_id: str):
     if not status:
         raise HTTPException(status_code=404, detail="Task ID not found.")
     return status
+
+## endpoints and funcs related to nerfstudio.
+@app.patch("/update-task-status/{task_id}")
+async def update_task_status(task_id: str, status_payload: dict):
+    global is_system_busy
+    if status_payload.get("status") == "success":
+        logger.info(f"[bold green]Task {task_id} completed.[/bold green]")
+    else:
+        logger.error(f"[bold red]Task {task_id} failed:[/bold red] {status_payload.get('error')}")
+    
+    is_system_busy = False
+    return {"message": "System unlocked."}
+
+async def trigger_splatting_task(task_id: str, action: str, commands: list):
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        try:
+            # 2. servise liste halinde gönderiyoruz
+            payload = {"task_id": task_id, "action": action, "commands": commands}
+            await client.post(f"{SPLAT_URL}/execute-task", json=payload)
+        except Exception as e:
+            global is_system_busy
+            is_system_busy = False
+            logger.error(f"Failed to trigger Splatting Service: {e}")
+
+@app.post("/start-pipeline/{video_name}")
+async def start_pipeline(video_name: str, background_tasks: BackgroundTasks):
+    global is_system_busy
+    if is_system_busy:
+        raise HTTPException(status_code=409, detail="System is busy.")
+
+    is_system_busy = True
+    video_stem = Path(video_name).stem.replace(" ", "_").lower()
+    
+    # Process Data that comes from colmap outputs.
+    # Generates as [VIDEO_NAME]_final.
+    proc_cmd = f"ns-process-data images --data /workspace/data/{video_stem}/images --output-dir /workspace/data/{video_stem}_final --skip-colmap --colmap-model-path /workspace/data/{video_stem}/sparse/0"
+    
+    # Train command. 
+    train_cmd = f"ns-train splatfacto --data /workspace/data/{video_stem}_final/ --output-dir /workspace/data/outputs"
+    
+    pipeline_commands = [proc_cmd, train_cmd]
+    is_system_busy = True
+    
+    background_tasks.add_task(trigger_splatting_task, video_stem, "full_pipeline", pipeline_commands)
+    
+    return {
+        "message": "Pipeline started successfully.",
+        "task_id": video_stem,
+        "steps": ["ns-process-data", "ns-train"]
+    }
