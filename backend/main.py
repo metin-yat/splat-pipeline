@@ -1,8 +1,9 @@
 import shutil, re
-import logging
+import logging, os
 from pathlib import Path
 from logging.handlers import RotatingFileHandler
-from fastapi import FastAPI, UploadFile, File, HTTPException, BackgroundTasks
+from fastapi import (FastAPI, UploadFile, File,
+                     HTTPException, BackgroundTasks, Query)
 from rich.logging import RichHandler
 from rich.console import Console
 import httpx
@@ -146,19 +147,16 @@ async def start_colmap_pipeline(video_name: str, background_tasks: BackgroundTas
         "message": "COLMAP Pipeline started. System is now locked until completion."
     }
 
-@app.get("/task-status/{video_id}")
-async def get_task_status(video_id: str):
-    status = tasks_progress.get(video_id.lower())
-    if not status:
-        raise HTTPException(status_code=404, detail="Task ID not found.")
-    return status
-
 ## endpoints and funcs related to nerfstudio.
 @app.patch("/update-task-status/{task_id}")
 async def update_task_status(task_id: str, status_payload: dict):
     global is_system_busy
+    
+    # Update global task status dictionary for the user to query
+    tasks_progress[task_id.lower()] = status_payload
+    
     if status_payload.get("status") == "success":
-        logger.info(f"[bold green]Task {task_id} completed.[/bold green]")
+        logger.info(f"[bold green]Task {task_id} completed successfully.[/bold green]")
     else:
         logger.error(f"[bold red]Task {task_id} failed:[/bold red] {status_payload.get('error')}")
     
@@ -182,7 +180,6 @@ async def start_pipeline(video_name: str, background_tasks: BackgroundTasks):
     if is_system_busy:
         raise HTTPException(status_code=409, detail="System is busy.")
 
-    is_system_busy = True
     video_stem = Path(video_name).stem.replace(" ", "_").lower()
     
     # Process Data that comes from colmap outputs.
@@ -202,3 +199,61 @@ async def start_pipeline(video_name: str, background_tasks: BackgroundTasks):
         "task_id": video_stem,
         "steps": ["ns-process-data", "ns-train"]
     }
+
+# --- Export and Config Management and Task Status Endpoints
+@app.post("/start-export/{video_name}")
+async def start_export(video_name: str, background_tasks: BackgroundTasks, config_folder: str = Query(None)):
+    global is_system_busy
+    if is_system_busy:
+        raise HTTPException(status_code=409, detail="System is busy.")
+
+    video_stem = video_name.replace(" ", "_").lower()
+    splatfacto_path = DATA_DIR / "outputs" / video_stem / "splatfacto"
+
+    if config_folder:
+        selected_config_dir = splatfacto_path / config_folder
+    else:
+        subdirs = [d for d in splatfacto_path.iterdir() if d.is_dir()]
+        if not subdirs:
+            raise HTTPException(status_code=404, detail="No training results found.")
+        selected_config_dir = max(subdirs, key=os.path.getmtime)
+
+    config_file = selected_config_dir / "config.yml"
+    if not config_file.exists():
+        raise HTTPException(status_code=404, detail="Config file not found.")
+
+    output_dir = selected_config_dir
+    export_cmd = f"ns-export gaussian-splat --load-config {config_file} --output-dir {output_dir}"
+    
+    # Update progress status for the user
+    tasks_progress[video_stem] = {"status": "export_pending", "action": "ns-export"}
+    
+    is_system_busy = True
+    background_tasks.add_task(trigger_splatting_task, video_stem, "export", [export_cmd])
+    
+    logger.info(f"[bold cyan]Export started:[/bold cyan] {video_stem} -> {output_dir}")
+    return {
+        "message": "Export task initiated.",
+        "task_id": video_stem,
+        "export_path": str(output_dir)
+    }
+
+
+@app.get("/list-configs/{video_name}")
+async def list_configs(video_name: str):
+    video_stem = video_name.replace(" ", "_").lower()
+    splatfacto_path = DATA_DIR / "outputs" / video_stem / "splatfacto"
+    
+    if not splatfacto_path.exists():
+        raise HTTPException(status_code=404, detail="Training folder not found.")
+    
+    # List all date-stamped training folders
+    configs = [d.name for d in splatfacto_path.iterdir() if d.is_dir()]
+    return {"video_name": video_stem, "available_configs": configs}
+
+@app.get("/task-status/{video_id}")
+async def get_task_status(video_id: str):
+    status = tasks_progress.get(video_id.lower())
+    if not status:
+        raise HTTPException(status_code=404, detail="Task ID not found.")
+    return status
